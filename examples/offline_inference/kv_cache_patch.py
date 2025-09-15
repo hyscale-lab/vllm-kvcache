@@ -7,7 +7,24 @@ from vllm import LLM, SamplingParams
 from vllm.attention.layer import Attention
 from vllm.forward_context import get_forward_context
 
+from transformers import AutoTokenizer
+
 logging.basicConfig(level=logging.INFO, filename="./run.log")
+
+tokenizer = AutoTokenizer.from_pretrained("Qwen/QwQ-32B")
+
+prompt = "Once upon a time, a princess lived in a castle"
+
+tokens = tokenizer.tokenize(prompt)
+token_ids = tokenizer.encode(prompt)
+
+
+logging.info("Original sentence:", prompt)
+logging.info("Tokens:", tokens)
+
+
+MODEL = "Qwen/QwQ-32B"
+
 
 START_ELE = 3
 END_ELE = 6
@@ -58,12 +75,11 @@ sampling_params = SamplingParams(
 )
 
 llm = LLM(
-    model="facebook/opt-125m",
-    gpu_memory_utilization=0.3,
+    model=MODEL,
+    # gpu_memory_utilization=0.3,
     enforce_eager=True,
+    tensor_parallel_size=4,
 )
-
-prompt = "Once upon a time, a princess lived in a castle"
 
 outputs = llm.generate(prompt, sampling_params=sampling_params)
 
