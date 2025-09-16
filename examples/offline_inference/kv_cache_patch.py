@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 MODEL = "/home/users/ntu/wpang010/scratch/models/QwQ-32B"
 # Sample prompts.
 prompts = [
-    "Write a 1000 word essay on AI.",
+    r"Once upon a time, a princess was living in a castle",
 ]
 logging.basicConfig(level=logging.INFO)
 
@@ -23,17 +23,21 @@ token_ids = tokenizer.encode(prompts[0])
 logging.info(f"Original sentence: {prompts[0]}")
 logging.info(f"Tokens: {tokens}")
 
+PATCHED = True 
+START_ELE = 483 
+END_ELE = 533 
 
-START_ELE = 0
-END_ELE = 0
+if PATCHED:
+    logging.info(f"[TOKEN ID LENGTH] {len(token_ids)}")
+    logging.info(f"[Deleted KV Cache Tokens] {tokenizer.decode(token_ids[START_ELE:END_ELE])}")
 
 # Monkey Patch Attention.forward
 
 def zero_func(cache: torch.Tensor, slot_mapping: torch.Tensor, block_size=16):
-    for idx in slot_mapping[START_ELE: min(END_ELE-START_ELE, len(slot_mapping))]:
-        #logging.info(f"[KV Cache] before index: {slot_mapping}, {cache[:, idx // block_size, idx % block_size, :, :]}")
+    for idx in slot_mapping[START_ELE: min(END_ELE, len(slot_mapping))]:
+        #logging.info(f"[KV Cache] before index: {idx}, {cache[:, idx // block_size, idx % block_size, :, :]}")
         cache[:, idx // block_size, idx % block_size, :, :].zero_()
-        #logging.info(f"[KV Cache] after index: {slot_mapping}, {cache[:, idx // block_size, idx % block_size, :, :]}")
+        #logging.info(f"[KV Cache] after index: {idx}, {cache[:, idx // block_size, idx % block_size, :, :]}")
 
 _original_forward = Attention.forward
 
@@ -54,12 +58,12 @@ def patched_forward(
     self_kv_cache = self.kv_cache[forward_context.virtual_engine]
 
     # Take note that for decode dimension will be (1, *)
-    if key.shape[0] != 1 and self_kv_cache.numel() > 0 and layer_id != "unknown" and attn_metadata:
+    if key.shape[0] != 1 and layer_id != "unknown" and attn_metadata and PATCHED:
         try:
 
             #logging.info(f"[KV LOG] Layer {layer_id} key shape: {tuple(key.shape)} value_shape: {tuple(value.shape)} query_shape: {tuple(query.shape)} virtual_engine: {forward_context.virtual_engine} kv_cache_shape: {self_kv_cache.shape}")
-            # logging.info(f"[Slot Mapping] {attn_metadata[layer_id].slot_mapping}")
-
+            #logging.info(f"[Slot Mapping] {attn_metadata[layer_id].slot_mapping}")
+            #logging.info(f"[attn_metadata] {attn_metadata}")
             zero_func(self_kv_cache, attn_metadata[layer_id].slot_mapping)
         except Exception as e:
             logging.error(e)
@@ -69,7 +73,7 @@ Attention.forward = patched_forward
 
 
 # Create a sampling params object.
-sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=1000)
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=8192)
 
 
 def main():
