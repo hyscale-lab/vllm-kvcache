@@ -9,33 +9,31 @@ from vllm.forward_context import get_forward_context
 
 from transformers import AutoTokenizer
 
-logging.basicConfig(level=logging.INFO, filename="./run.log")
+MODEL = "/home/users/ntu/wpang010/scratch/models/QwQ-32B"
+# Sample prompts.
+prompts = [
+    "Write a 1000 word essay on AI.",
+]
+logging.basicConfig(level=logging.INFO)
 
-tokenizer = AutoTokenizer.from_pretrained("Qwen/QwQ-32B")
+tokenizer = AutoTokenizer.from_pretrained(MODEL)
 
-prompt = "Once upon a time, a princess lived in a castle"
-
-tokens = tokenizer.tokenize(prompt)
-token_ids = tokenizer.encode(prompt)
-
-
-logging.info("Original sentence:", prompt)
-logging.info("Tokens:", tokens)
-
-
-MODEL = "Qwen/QwQ-32B"
+tokens = tokenizer.tokenize(prompts[0])
+token_ids = tokenizer.encode(prompts[0])
+logging.info(f"Original sentence: {prompts[0]}")
+logging.info(f"Tokens: {tokens}")
 
 
-START_ELE = 3
-END_ELE = 6
+START_ELE = 0
+END_ELE = 0
 
 # Monkey Patch Attention.forward
 
 def zero_func(cache: torch.Tensor, slot_mapping: torch.Tensor, block_size=16):
-    for idx in slot_mapping[START_ELE, max(END_ELE-START_ELE, len(slot_mapping))]:
-        # logging.info(f"[KV Cache] before index: {slot_mapping}, {cache[:, idx // block_size, idx % block_size, :, :]}")
+    for idx in slot_mapping[START_ELE: min(END_ELE-START_ELE, len(slot_mapping))]:
+        #logging.info(f"[KV Cache] before index: {slot_mapping}, {cache[:, idx // block_size, idx % block_size, :, :]}")
         cache[:, idx // block_size, idx % block_size, :, :].zero_()
-        # logging.info(f"[KV Cache] after index: {slot_mapping}, {cache[:, idx // block_size, idx % block_size, :, :]}")
+        #logging.info(f"[KV Cache] after index: {slot_mapping}, {cache[:, idx // block_size, idx % block_size, :, :]}")
 
 _original_forward = Attention.forward
 
@@ -46,41 +44,50 @@ def patched_forward(
         value: torch.Tensor,
         output_shape: Optional[torch.Size] = None,
     ) -> torch.Tensor:
-    
+
     forward_context = get_forward_context()
     attn_metadata = forward_context.attn_metadata
     layer_id = getattr(self, "layer_name", "unknown")
-    
-    result = _original_forward(self, query, key, value, output_shape)
-    
-    self_kv_cache = self.kv_cache[forward_context.virtual_engine]
-    
-    # Take note that for decode dimension will be (1, *)
-    if key.shape[0] != 1 and self_kv_cache.numel() > 0:
-        try:
-            
-            # logging.info(f"[KV LOG] Layer {layer_id} key shape: {tuple(key.shape)} value_shape: {tuple(value.shape)} query_shape: {tuple(query.shape)} virtual_engine: {forward_context.virtual_engine}")
 
+    result = _original_forward(self, query, key, value, output_shape)
+
+    self_kv_cache = self.kv_cache[forward_context.virtual_engine]
+
+    # Take note that for decode dimension will be (1, *)
+    if key.shape[0] != 1 and self_kv_cache.numel() > 0 and layer_id != "unknown" and attn_metadata:
+        try:
+
+            #logging.info(f"[KV LOG] Layer {layer_id} key shape: {tuple(key.shape)} value_shape: {tuple(value.shape)} query_shape: {tuple(query.shape)} virtual_engine: {forward_context.virtual_engine} kv_cache_shape: {self_kv_cache.shape}")
             # logging.info(f"[Slot Mapping] {attn_metadata[layer_id].slot_mapping}")
-            
+
             zero_func(self_kv_cache, attn_metadata[layer_id].slot_mapping)
         except Exception as e:
             logging.error(e)
-    
+
     return result
 Attention.forward = patched_forward
 
-sampling_params = SamplingParams(
-    max_tokens=50,
-)
 
-llm = LLM(
-    model=MODEL,
-    # gpu_memory_utilization=0.3,
-    enforce_eager=True,
-    tensor_parallel_size=4,
-)
+# Create a sampling params object.
+sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=1000)
 
-outputs = llm.generate(prompt, sampling_params=sampling_params)
 
-logging.info(f"Generated Text: {outputs[0].outputs[0].text}")
+def main():
+    # Create an LLM.
+    llm = LLM(model="/home/users/ntu/wpang010/scratch/models/QwQ-32B", tensor_parallel_size=4, gpu_memory_utilization=0.7, enforce_eager=True)
+    # Generate texts from the prompts.
+    # The output is a list of RequestOutput objects
+    # that contain the prompt, generated text, and other information.
+    outputs = llm.generate(prompts, sampling_params)
+    # Print the outputs.
+    print("\nGenerated Outputs:\n" + "-" * 60)
+    for output in outputs:
+        prompt = output.prompt
+        generated_text = output.outputs[0].text
+        print(f"Prompt:    {prompt!r}")
+        print(f"Output:    {generated_text!r}")
+        print("-" * 60)
+
+
+if __name__ == "__main__":
+    main()
