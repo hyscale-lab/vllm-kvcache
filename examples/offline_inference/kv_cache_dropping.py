@@ -30,7 +30,7 @@ EPSILON = 0.1
 
 def zero_func(cache: torch.Tensor, slot_mapping: torch.Tensor, block_size=16):
     for idx in slot_mapping:
-        if random.random < EPSILON:        
+        if random.random() < EPSILON:        
             #logging.info(f"[KV Cache] before index: {idx}, {cache[:, idx // block_size, idx % block_size, :, :]}")
             cache[:, idx // block_size, idx % block_size, :, :].zero_()
             #logging.info(f"[KV Cache] after index: {idx}, {cache[:, idx // block_size, idx % block_size, :, :]}")
